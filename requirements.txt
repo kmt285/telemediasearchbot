@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+groq
+pymongo
+python-dotenv
+flask
