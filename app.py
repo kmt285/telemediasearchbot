@@ -17,8 +17,8 @@ DEST_CHANNEL = os.getenv("DEST_CHANNEL")
 
 # Gemini Setup
 genai.configure(api_key=GEMINI_KEY)
-# Model နာမည်ကို အရှည်အတိုင်း ရေးပေးခြင်းဖြင့် 404 Error ကို ကာကွယ်ပါသည်
-model = genai.GenerativeModel(model_name="models/gemini-1.5-flash")
+# Model နာမည်ကို ပြောင်းလဲပြင်ဆင်ထားပါသည်
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # UserBot Setup
 bot = Client("poster_agent", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
@@ -31,7 +31,7 @@ def index():
     return "Magic Poster Agent is Online!"
 
 def run_flask():
-    # Render ၏ Port (သို့မဟုတ် 10000) ကို သေချာချိတ်ဆက်ရန်
+    # Render ၏ Port ကို သေချာချိတ်ဆက်ရန်
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host='0.0.0.0', port=port)
 
@@ -51,10 +51,9 @@ async def analyze_poster(client, message):
         Emoji များ နှင့် သင့်တော်သော Hashtag များ ထည့်ပေးပါ။
         """
         
-        # Generation config ထည့်သွင်းခြင်းဖြင့် Error နည်းစေပါသည်
+        # Generation config သတ်မှတ်ခြင်း
         response = model.generate_content(
-            [prompt, sample_file],
-            generation_config=genai.GenerationConfig(temperature=0.7)
+            [prompt, sample_file]
         )
         
         await bot.send_photo(
@@ -65,11 +64,9 @@ async def analyze_poster(client, message):
         await status.edit("✅ Channel ထဲသို့ တင်ပြီးပါပြီ။")
         
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg:
-            await status.edit("❌ Gemini API 404 Error: Model ချိတ်ဆက်မှု လွဲနေပါသည်။")
-        else:
-            await status.edit(f"❌ Error: {error_msg}")
+        # Error ဖြစ်လျှင် Log မှာပါ ထုတ်ပြရန်
+        print(f"DEBUG Error: {str(e)}")
+        await status.edit(f"❌ Error: {str(e)}")
     finally:
         if os.path.exists(photo_path): os.remove(photo_path)
 
