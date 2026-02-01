@@ -1,8 +1,8 @@
 import os
+import asyncio
 from flask import Flask
 from threading import Thread
-from pyrogram import Client, filters
-from pymongo import MongoClient
+from pyrogram import Client, filters, errors
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,66 +11,51 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
-MONGO_URI = os.getenv("MONGO_URI")
 DEST_CHANNEL = os.getenv("DEST_CHANNEL")
 
-# Clients Setup
 app = Client("mirror_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-db_client = MongoClient(MONGO_URI)
-db = db_client['mirror_db']['history']
 
-# --- RENDER PORT BINDING (FLASK) ---
-flask_app = Flask(__name__)
+# --- RENDER PORT FIX ---
+server = Flask(__name__)
+@server.route('/')
+def home(): return "Bot is Online!"
+def run_web(): server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-@flask_app.route('/')
-def home():
-    return "Super Forwarder is Active and Online!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port)
-
-# --- BOT LOGIC ---
+# --- MIRROR LOGIC ---
 @app.on_message(filters.private & filters.text)
-async def mirror_logic(client, message):
-    # Telegram Link ပါသလား စစ်ဆေးခြင်း
-    if "t.me/" in message.text:
-        status = await message.reply("⏳ Clone လုပ်နေပါသည်...")
+async def super_copy(client, message):
+    if "t.me/" not in message.text:
+        return
+
+    status = await message.reply("⏳ Processing...")
+    try:
+        # Link ကို ခွဲထုတ်ခြင်း
+        parts = message.text.split('/')
+        msg_id = int(parts[-1])
+        source = parts[-2]
+
+        # Private Channel ID ကို ပြောင်းလဲခြင်း
+        if source.isdigit():
+            source = int("-100" + source)
+
+        # Peer ကို အရင်ဆုံး Resolve လုပ်ခြင်း (ဒါမှ Peer id invalid မဖြစ်မှာပါ)
         try:
-            # Link မှ Chat ID နှင့် Message ID ကို ခွဲထုတ်ခြင်း
-            parts = message.text.split('/')
-            source_chat = parts[-2]
-            msg_id = int(parts[-1])
+            chat = await client.get_chat(source)
+        except errors.RPCError:
+            return await status.edit("❌ ဒီ Channel ကို Bot က မသိပါဘူး။ အရင် Join ထားဖို့ လိုအပ်ပါတယ်။")
 
-            # Username အစား ID သုံးလျှင် -100 ထည့်ပေးရတတ်သည်
-            if source_chat.isdigit():
-                source_chat = int("-100" + source_chat)
+        # တိုက်ရိုက်ကူးယူခြင်း
+        await client.copy_message(
+            chat_id=DEST_CHANNEL,
+            from_chat_id=chat.id,
+            message_id=msg_id
+        )
+        await status.edit(f"✅ Clone အောင်မြင်ပါပြီ!")
 
-            # တိုက်ရိုက်ကူးယူခြင်း (မူရင်း channel က ဖျက်လည်း မပျက်ပါ)
-            cloned_msg = await client.copy_message(
-                chat_id=DEST_CHANNEL,
-                from_chat_id=source_chat,
-                message_id=msg_id
-            )
+    except Exception as e:
+        await status.edit(f"❌ Error: {str(e)}")
 
-            # MongoDB တွင် မှတ်တမ်းတင်ခြင်း
-            db.insert_one({
-                "source": source_chat,
-                "msg_id": msg_id,
-                "new_msg_id": cloned_msg.id
-            })
-
-            await status.edit("✅ Clone အောင်မြင်ပြီး Channel ထဲသို့ တင်ပေးလိုက်ပါပြီ!")
-            
-        except Exception as e:
-            await status.edit(f"❌ Error: {str(e)}")
-
-# --- STARTING ---
 if __name__ == "__main__":
-    # Flask ကို Thread ဖြင့် အရင် Run ပါ
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-    
+    Thread(target=run_web).start() # Render အတွက် Web Port ဖွင့်ခြင်း
     print("UserBot is starting...")
     app.run()
