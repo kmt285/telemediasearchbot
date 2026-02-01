@@ -1,77 +1,60 @@
 import os
-import re
-import asyncio
-from flask import Flask
-from threading import Thread
+import google.generativeai as genai
 from pyrogram import Client, filters
-from groq import Groq
-from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- CONFIGURATION ---
+# Configuration
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 SESSION_STRING = os.getenv("SESSION_STRING")
-GROQ_KEY = os.getenv("GROQ_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
+GEMINI_KEY = os.getenv("GEMINI_KEY")
 DEST_CHANNEL = os.getenv("DEST_CHANNEL")
 
-# သင်ယုံကြည်ရတဲ့ MMSUB Channel Usernames တွေကို ဒီမှာ စာရင်းသွင်းပါ
-SOURCE_CHANNELS = ["@moviesbydatahouse", "@moviesbydatahousefree", "@channelmyanmarfu"] 
+# Gemini Setup
+genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash') # Vision ပါတဲ့ model
 
-app = Client("movie_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-user_app = Client("user_session", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-groq_client = Groq(api_key=GROQ_KEY)
-db = MongoClient(MONGO_URI)['movie_db']['posted_movies']
+# UserBot Setup
+app = Client("poster_agent", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
 
-server = Flask('')
-@server.route('/')
-def home(): return "Bot is running!"
-def run_web(): server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
-def is_burmese(text):
-    if not text: return False
-    return bool(re.search(r'[\u1000-\u109F]', text))
-
-def ai_filter_mmsub(caption):
+@app.on_message(filters.photo & filters.private)
+async def analyze_poster(client, message):
+    status = await message.reply("📸 ပုံကို ဖတ်နေပါသည်၊ ခေတ္တစောင့်ပါ...")
+    
+    # ၁။ ပုံကို ယာယီ Download ဆွဲခြင်း
+    photo_path = await message.download()
+    
     try:
-        completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": f"Does this caption belong to a Myanmar Subtitle movie? Caption: {caption}. Answer ONLY 'YES' or 'NO'."}],
-            model="llama3-70b-8192"
+        # ၂။ Gemini Vision ဆီ ပို့ပြီး ခိုင်းခြင်း
+        cookie_img = genai.upload_file(path=photo_path)
+        
+        prompt = """
+        ဒီ Poster ပုံထဲက ရုပ်ရှင်နာမည်ကို ရှာပေးပါ။ 
+        ပြီးရင် အဲ့ဒီရုပ်ရှင်အတွက် မြန်မာလို စိတ်ဝင်စားစရာကောင်းတဲ့ အညွှန်း (Caption) တစ်ခု ရေးပေးပါ။
+        အညွှန်းထဲမှာ - ရုပ်ရှင်နာမည်၊ အမျိုးအစား (Genre)၊ ဇာတ်လမ်းအကျဉ်းချုပ် နဲ့ Emoji လေးတွေ ပါရမယ်။
+        နောက်ဆုံးမှာ သင့်တော်မယ့် Hashtag ၅ ခု ထည့်ပေးပါ။
+        """
+        
+        response = model.generate_content([prompt, cookie_img])
+        caption_text = response.text
+        
+        # ၃။ Channel ထဲသို့ ပုံနှင့် အညွှန်းကို တင်ခြင်း
+        await app.send_photo(
+            chat_id=DEST_CHANNEL,
+            photo=photo_path,
+            caption=caption_text
         )
-        return completion.choices[0].message.content.strip().upper()
-    except: return "NO"
-
-@app.on_message(filters.command("find") & filters.private)
-async def find_in_sources(client, message):
-    if len(message.command) < 2:
-        return await message.reply("ရုပ်ရှင်နာမည်ပေးပါ။")
+        
+        await status.edit("✅ Channel ထဲကို တင်ပေးလိုက်ပါပြီ!")
+        
+    except Exception as e:
+        await status.edit(f"❌ Error တက်သွားပါတယ်: {str(e)}")
     
-    movie_name = message.text.split(None, 1)[1]
-    status = await message.reply(f"🎯 သတ်မှတ်ထားသော Channel များတွင် '{movie_name}' ကို ရှာနေပါသည်...")
+    # ယာယီဖိုင်ကို ပြန်ဖျက်ခြင်း
+    if os.path.exists(photo_path):
+        os.remove(photo_path)
 
-    async with user_app:
-        for channel in SOURCE_CHANNELS:
-            # သတ်မှတ်ထားတဲ့ channel တစ်ခုချင်းစီမှာ Keyword နဲ့ ရှာမယ်
-            async for msg in user_app.search_messages(channel, query=movie_name, filter="video", limit=5):
-                caption = msg.caption or ""
-                
-                # မြန်မာစာ ပါ၊ မပါ စစ်မယ် (AI မစစ်ခင် ရိုးရိုး regex နဲ့ အရင်စစ်တာက ပိုစိတ်ချရပါတယ်)
-                if is_burmese(caption) or "MMSUB" in caption.upper():
-                    # AI က နောက်ဆုံးအတည်ပြုမယ်
-                    if "YES" in ai_filter_mmsub(caption):
-                        if not db.find_one({"file_id": msg.video.file_unique_id}):
-                            # ပို့စ်တင်မယ်
-                            await app.send_message(DEST_CHANNEL, f"🎬 **{movie_name}**\n\n{caption}")
-                            await msg.copy(DEST_CHANNEL, caption=f"📁 {movie_name}")
-                            db.insert_one({"file_id": msg.video.file_unique_id})
-                            return await status.edit(f"✅ '{channel}' မှ ရှာတွေ့၍ တင်ပေးလိုက်ပါပြီ။")
-    
-    await status.edit("❌ သတ်မှတ်ထားသော Channel များတွင် ရှာမတွေ့ပါ သို့မဟုတ် MMSUB မဟုတ်ပါ။")
-
-if __name__ == "__main__":
-    Thread(target=run_web).start()
-    app.run()
+print("Magic Poster Agent is running...")
+app.run()
