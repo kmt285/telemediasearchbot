@@ -1,8 +1,8 @@
 import os
-import asyncio
 from flask import Flask
 from threading import Thread
-from pyrogram import Client, filters, errors
+from pyrogram import Client, filters
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,51 +11,56 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
-DEST_CHANNEL = os.getenv("DEST_CHANNEL")
+GROQ_KEY = os.getenv("GROQ_KEY")
 
-app = Client("mirror_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+# Clients Initialize
+app = Client("ai_chat_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+ai_client = Groq(api_key=GROQ_KEY)
 
-# --- RENDER PORT FIX ---
-server = Flask(__name__)
-@server.route('/')
-def home(): return "Bot is Online!"
-def run_web(): server.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+# --- RENDER PORT BINDING & KEEP ALIVE ---
+flask_app = Flask(__name__)
 
-# --- MIRROR LOGIC ---
-@app.on_message(filters.private & filters.text)
-async def super_copy(client, message):
-    if "t.me/" not in message.text:
-        return
+@flask_app.route('/')
+def home():
+    # ဒီနေရာက Render ကို "ငါ အလုပ်လုပ်နေတယ်" လို့ အကြောင်းကြားတဲ့နေရာပါ
+    return "AI Chat UserBot is Active and Online!"
 
-    status = await message.reply("⏳ Processing...")
+def run_flask():
+    # Render က ပေးတဲ့ Port ကို အလိုအလျောက် ဖတ်ပြီး ချိတ်ပါမယ်
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port)
+
+# --- AI LOGIC ---
+def get_ai_response(user_input):
     try:
-        # Link ကို ခွဲထုတ်ခြင်း
-        parts = message.text.split('/')
-        msg_id = int(parts[-1])
-        source = parts[-2]
-
-        # Private Channel ID ကို ပြောင်းလဲခြင်း
-        if source.isdigit():
-            source = int("-100" + source)
-
-        # Peer ကို အရင်ဆုံး Resolve လုပ်ခြင်း (ဒါမှ Peer id invalid မဖြစ်မှာပါ)
-        try:
-            chat = await client.get_chat(source)
-        except errors.RPCError:
-            return await status.edit("❌ ဒီ Channel ကို Bot က မသိပါဘူး။ အရင် Join ထားဖို့ လိုအပ်ပါတယ်။")
-
-        # တိုက်ရိုက်ကူးယူခြင်း
-        await client.copy_message(
-            chat_id=DEST_CHANNEL,
-            from_chat_id=chat.id,
-            message_id=msg_id
+        completion = ai_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "သင်က ဖော်ရွေတဲ့ မြန်မာလူငယ်တစ်ယောက်ပါ။ အမေးအဖြေတွေကို မြန်မာလိုပဲ ပြန်ဖြေပေးပါ။"
+                },
+                {"role": "user", "content": user_input}
+            ],
+            model="llama3-70b-8192",
         )
-        await status.edit(f"✅ Clone အောင်မြင်ပါပြီ!")
-
+        return completion.choices[0].message.content
     except Exception as e:
-        await status.edit(f"❌ Error: {str(e)}")
+        return f"⚠️ AI Error: {str(e)}"
 
+# စာဝင်လာရင် AI က ပြန်ဖြေမည့်အပိုင်း
+@app.on_message(filters.private & filters.text & ~filters.me)
+async def chat_handler(client, message):
+    # AI ဆီက အဖြေတောင်းပြီး ပြန်ပို့ပေးပါမယ်
+    response = get_ai_response(message.text)
+    await message.reply(response)
+
+# --- EXECUTION ---
 if __name__ == "__main__":
-    Thread(target=run_web).start() # Render အတွက် Web Port ဖွင့်ခြင်း
+    # ၁။ Flask ကို သီးသန့် Thread တစ်ခုအနေနဲ့ အရင် Run ပါ (Port Binding အတွက်)
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    # ၂။ UserBot ကို စတင်ပါ
     print("UserBot is starting...")
     app.run()
