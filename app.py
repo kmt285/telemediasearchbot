@@ -17,7 +17,7 @@ DEST_CHANNEL = os.getenv("DEST_CHANNEL")
 
 # Gemini Setup
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel(model_name="gemini-1.5-flash")
 
 # UserBot Setup
 bot = Client("poster_agent", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
@@ -61,3 +61,4 @@ if __name__ == "__main__":
     
     print("Bot is starting...")
     bot.run()
+
