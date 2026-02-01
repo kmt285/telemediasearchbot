@@ -1,9 +1,8 @@
 import os
-import re
 from flask import Flask
 from threading import Thread
-import google.generativeai as genai
 from pyrogram import Client, filters
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,69 +11,66 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
 DEST_CHANNEL = os.getenv("DEST_CHANNEL")
 
-# Gemini Setup
-genai.configure(api_key=GEMINI_KEY)
-# Model နာမည်ကို ပြောင်းလဲပြင်ဆင်ထားပါသည်
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Clients Setup
+app = Client("mirror_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+db_client = MongoClient(MONGO_URI)
+db = db_client['mirror_db']['history']
 
-# UserBot Setup
-bot = Client("poster_agent", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+# --- RENDER PORT BINDING (FLASK) ---
+flask_app = Flask(__name__)
 
-# --- RENDER PORT BINDING ---
-app_flask = Flask(__name__)
-
-@app_flask.route('/')
-def index():
-    return "Magic Poster Agent is Online!"
+@flask_app.route('/')
+def home():
+    return "Super Forwarder is Active and Online!"
 
 def run_flask():
-    # Render ၏ Port ကို သေချာချိတ်ဆက်ရန်
     port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port)
 
 # --- BOT LOGIC ---
-@bot.on_message(filters.photo & filters.private)
-async def analyze_poster(client, message):
-    status = await message.reply("📸 AI က ပုံကို လေ့လာနေပါသည်...")
-    photo_path = await message.download()
-    
-    try:
-        # Gemini သို့ ပုံပို့ခြင်း
-        sample_file = genai.upload_file(path=photo_path)
-        
-        prompt = """
-        ဒီ Poster ပုံထဲက ရုပ်ရှင်နာမည်ကို ဖော်ပြပေးပါ။ 
-        ပြီးရင် အဲ့ဒီရုပ်ရှင်အတွက် မြန်မာလို စိတ်ဝင်စားစရာကောင်းတဲ့ အညွှန်း (Caption) ရေးပေးပါ။
-        Emoji များ နှင့် သင့်တော်သော Hashtag များ ထည့်ပေးပါ။
-        """
-        
-        # Generation config သတ်မှတ်ခြင်း
-        response = model.generate_content(
-            [prompt, sample_file]
-        )
-        
-        await bot.send_photo(
-            chat_id=DEST_CHANNEL, 
-            photo=photo_path, 
-            caption=response.text
-        )
-        await status.edit("✅ Channel ထဲသို့ တင်ပြီးပါပြီ။")
-        
-    except Exception as e:
-        # Error ဖြစ်လျှင် Log မှာပါ ထုတ်ပြရန်
-        print(f"DEBUG Error: {str(e)}")
-        await status.edit(f"❌ Error: {str(e)}")
-    finally:
-        if os.path.exists(photo_path): os.remove(photo_path)
+@app.on_message(filters.private & filters.text)
+async def mirror_logic(client, message):
+    # Telegram Link ပါသလား စစ်ဆေးခြင်း
+    if "t.me/" in message.text:
+        status = await message.reply("⏳ Clone လုပ်နေပါသည်...")
+        try:
+            # Link မှ Chat ID နှင့် Message ID ကို ခွဲထုတ်ခြင်း
+            parts = message.text.split('/')
+            source_chat = parts[-2]
+            msg_id = int(parts[-1])
 
-# --- EXECUTION ---
+            # Username အစား ID သုံးလျှင် -100 ထည့်ပေးရတတ်သည်
+            if source_chat.isdigit():
+                source_chat = int("-100" + source_chat)
+
+            # တိုက်ရိုက်ကူးယူခြင်း (မူရင်း channel က ဖျက်လည်း မပျက်ပါ)
+            cloned_msg = await client.copy_message(
+                chat_id=DEST_CHANNEL,
+                from_chat_id=source_chat,
+                message_id=msg_id
+            )
+
+            # MongoDB တွင် မှတ်တမ်းတင်ခြင်း
+            db.insert_one({
+                "source": source_chat,
+                "msg_id": msg_id,
+                "new_msg_id": cloned_msg.id
+            })
+
+            await status.edit("✅ Clone အောင်မြင်ပြီး Channel ထဲသို့ တင်ပေးလိုက်ပါပြီ!")
+            
+        except Exception as e:
+            await status.edit(f"❌ Error: {str(e)}")
+
+# --- STARTING ---
 if __name__ == "__main__":
+    # Flask ကို Thread ဖြင့် အရင် Run ပါ
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
     
-    print("Bot is starting...")
-    bot.run()
+    print("UserBot is starting...")
+    app.run()
