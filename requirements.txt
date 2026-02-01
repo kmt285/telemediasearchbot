@@ -1,6 +1,6 @@
 pyrogram
 tgcrypto
-groq
+google-generativeai
 pymongo
 python-dotenv
 flask
