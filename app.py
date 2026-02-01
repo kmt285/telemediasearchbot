@@ -14,53 +14,52 @@ SESSION_STRING = os.getenv("SESSION_STRING")
 GROQ_KEY = os.getenv("GROQ_KEY")
 
 # Clients Initialize
-app = Client("ai_chat_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+app = Client("fun_ai_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
 ai_client = Groq(api_key=GROQ_KEY)
 
-# --- RENDER PORT BINDING & KEEP ALIVE ---
+# --- RENDER WEB SERVER (KEEP ALIVE) ---
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def home():
-    # ဒီနေရာက Render ကို "ငါ အလုပ်လုပ်နေတယ်" လို့ အကြောင်းကြားတဲ့နေရာပါ
-    return "AI Chat UserBot is Active and Online!"
+    return "Fun AI UserBot is Online!"
 
 def run_flask():
-    # Render က ပေးတဲ့ Port ကို အလိုအလျောက် ဖတ်ပြီး ချိတ်ပါမယ်
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# --- AI LOGIC ---
-def get_ai_response(user_input):
+# --- AI RESPONSE LOGIC ---
+def get_ai_reply(user_text):
     try:
         completion = ai_client.chat.completions.create(
+            # Model အသစ်ကို ပြောင်းလဲအသုံးပြုထားပါသည်
+            model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system", 
-                    "content": "သင်က ဖော်ရွေတဲ့ မြန်မာလူငယ်တစ်ယောက်ပါ။ အမေးအဖြေတွေကို မြန်မာလိုပဲ ပြန်ဖြေပေးပါ။"
+                    "content": "သင်က ဟာသဉာဏ်ရှိတဲ့ မြန်မာလူငယ်တစ်ယောက်ပါ။ စာပြန်ရင် လူငယ် vibe အတိုင်း ပေါ့ပေါ့ပါးပါးနဲ့ မြန်မာလိုပဲ ပြန်ဖြေပေးပါ။"
                 },
-                {"role": "user", "content": user_input}
+                {"role": "user", "content": user_text}
             ],
-            model="llama3-70b-8192",
+            temperature=0.8,
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"⚠️ AI Error: {str(e)}"
+        return f"⚠️ Groq Error: {str(e)}"
 
-# စာဝင်လာရင် AI က ပြန်ဖြေမည့်အပိုင်း
+# --- BOT HANDLERS ---
 @app.on_message(filters.private & filters.text & ~filters.me)
 async def chat_handler(client, message):
-    # AI ဆီက အဖြေတောင်းပြီး ပြန်ပို့ပေးပါမယ်
-    response = get_ai_response(message.text)
-    await message.reply(response)
+    # စာဝင်လာရင် AI က ပြန်ဖြေပေးမည်
+    reply = get_ai_reply(message.text)
+    await message.reply(reply)
 
-# --- EXECUTION ---
+# --- STARTING ---
 if __name__ == "__main__":
-    # ၁။ Flask ကို သီးသန့် Thread တစ်ခုအနေနဲ့ အရင် Run ပါ (Port Binding အတွက်)
+    # Render ၏ Port Binding အတွက် Flask ကို အရင်စတင်ပါမည်
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
     
-    # ၂။ UserBot ကို စတင်ပါ
-    print("UserBot is starting...")
+    print("AI UserBot is starting...")
     app.run()
